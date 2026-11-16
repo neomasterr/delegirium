@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Delegirium;
 
+use Delegirium\Http\HttpClient;
+use Delegirium\Provider\ChatCompletionsProvider;
+use Delegirium\Provider\RecordedProvider;
+
 /**
  * Небольшая консоль для наброска: компиляция, проверка, демо, кеш.
  */
@@ -21,6 +25,10 @@ final class Cli
         'DELEGIRIUM_CACHE_DIR',
         'DELEGIRIUM_ENV_FILE',
         'DELEGIRIUM_RECORD',
+        'DELEGIRIUM_HTTP',
+        'DELEGIRIUM_PROXY',
+        'DELEGIRIUM_CAFILE',
+        'DELEGIRIUM_INSECURE',
     ];
 
     /** @var resource */
@@ -47,6 +55,7 @@ final class Cli
                 'compile', 'build' => $this->compile($positional, $flags),
                 'check', 'lint' => $this->check($positional, $flags),
                 'cache:clear' => $this->cacheClear($flags),
+                'doctor', 'ping' => $this->doctor($flags),
                 'env' => $this->env(),
                 'demo' => $this->demo($flags),
                 'help', '--help', '-h' => $this->help(),
@@ -114,6 +123,10 @@ final class Cli
 
         $unit = Delegirium::compileFile($file, $this->options($flags));
 
+        foreach ($unit->warnings() as $warning) {
+            $this->line('  ! ' . $warning);
+        }
+
         $this->line(sprintf('%s: OK, %d AI-функц.', $file, count($unit->declarations())));
         $this->summary($unit, 0.0);
 
@@ -152,6 +165,197 @@ final class Cli
         }
 
         return 0;
+    }
+
+    /**
+     * Проверяет окружение, транспорт, DNS/TLS и (по желанию) реальный запрос
+     * к модели. Печатает дословную причину сбоя вместо «не удалось».
+     *
+     * @param array<string, mixed> $flags
+     */
+    private function doctor(array $flags): int
+    {
+        $live = ($flags['live'] ?? false) === true;
+        $http = HttpClient::fromEnv();
+
+        $this->line('Delegirium ' . Delegirium::VERSION . ' — диагностика');
+        $this->line('');
+        $this->line('Среда:');
+        $this->stat('PHP', PHP_VERSION . ' (' . PHP_OS . ')', version_compare(PHP_VERSION, '8.1', '>='));
+        $this->stat('json', extension_loaded('json') ? 'да' : 'нет', extension_loaded('json'));
+        $this->stat('openssl', extension_loaded('openssl') ? 'да' : 'нет', extension_loaded('openssl'));
+        $this->stat('curl', extension_loaded('curl') ? 'да' : 'нет (будет stream)', true);
+        $this->stat('allow_url_fopen', ini_get('allow_url_fopen') ? 'on' : 'off', (bool) ini_get('allow_url_fopen'));
+
+        $this->line('');
+        $this->line('Транспорт:');
+        $this->line('  ' . $http->transportName() . ($http->transportName() === 'curl' ? ' (расширение curl)' : ' (потоки PHP)'));
+        $this->line('  proxy:  ' . ($http->proxy() ?? '—'));
+        $this->line('  cafile: ' . ($http->caFile() ?? '—'));
+
+        if ($http->insecure()) {
+            $this->line('  ! DELEGIRIUM_INSECURE=1: TLS не проверяется. Так можно только диагностировать.');
+        }
+
+        $envFiles = Delegirium::loadedEnvFiles();
+        $this->line('');
+        $this->line('.env: ' . ($envFiles === [] ? 'не найден' : implode(', ', $envFiles)));
+
+        $this->line('');
+        $this->line('Провайдер:');
+
+        try {
+            $provider = Delegirium::provider($this->options($flags));
+        } catch (DelegiriumError $error) {
+            $this->stat('конфигурация', $error->getMessage(), false);
+            $this->line('');
+            $this->line('Подсказка: заполните .env по образцу .env.example или экспортируйте нужные переменные.');
+
+            return 1;
+        }
+
+        $this->line('  ' . $provider->name() . ' / ' . $provider->model());
+
+        if ($provider instanceof RecordedProvider) {
+            $this->line('  оффлайн-провайдер: сеть не нужна');
+
+            return 0;
+        }
+
+        $endpoint = $provider instanceof ChatCompletionsProvider ? $provider->endpoint() : null;
+        $this->line('  endpoint: ' . ($endpoint ?? '—'));
+
+        if ($endpoint === null) {
+            return 0;
+        }
+
+        $this->line('');
+        $this->line('Сеть:');
+        $reachable = $this->probeEndpoint($endpoint, $http);
+
+        $this->line('');
+
+        if (!$live) {
+            $this->line('Модель не вызывалась. Реальный запрос: php bin/delegirium doctor --live');
+
+            return $reachable ? 0 : 1;
+        }
+
+        $this->line('Запрос к модели:');
+
+        try {
+            $body = $provider->generate($this->smokeRequest());
+            $this->stat('ответ', 'получено тело: ' . $body, true);
+
+            return 0;
+        } catch (DelegiriumError $error) {
+            $this->stat('ответ', $error->getMessage(), false);
+
+            return 1;
+        }
+    }
+
+    private function probeEndpoint(string $endpoint, HttpClient $http): bool
+    {
+        $parts = parse_url($endpoint);
+
+        if (!is_array($parts) || !isset($parts['host'])) {
+            $this->stat('endpoint', 'не удалось разобрать ' . $endpoint, false);
+
+            return false;
+        }
+
+        $scheme = strtolower((string) ($parts['scheme'] ?? 'https'));
+        $host = (string) $parts['host'];
+        $port = (int) ($parts['port'] ?? ($scheme === 'https' ? 443 : 80));
+        $proxy = $http->proxy();
+
+        if ($proxy !== null) {
+            $this->line('  DNS пропущен: используется прокси ' . $proxy);
+        } else {
+            $ip = gethostbyname($host);
+
+            if ($ip !== $host) {
+                $this->stat('DNS', $host . ' -> ' . $ip, true);
+            } else {
+                $this->stat('DNS', $host . ' не разрешается', false);
+            }
+        }
+
+        $remote = $proxy !== null
+            ? 'tcp://' . $proxy
+            : ($scheme === 'https' ? 'ssl://' : 'tcp://') . $host . ':' . $port;
+
+        $context = [];
+
+        if ($proxy === null && $scheme === 'https') {
+            if ($http->caFile() !== null) {
+                $context['ssl']['cafile'] = $http->caFile();
+            }
+
+            if ($http->insecure()) {
+                $context['ssl']['verify_peer'] = false;
+                $context['ssl']['verify_peer_name'] = false;
+            }
+        }
+
+        $warning = null;
+        $errno = 0;
+        $errstr = '';
+
+        set_error_handler(static function (int $severity, string $message) use (&$warning): bool {
+            $warning = $message;
+
+            return true;
+        });
+
+        try {
+            $socket = stream_socket_client(
+                $remote,
+                $errno,
+                $errstr,
+                5,
+                STREAM_CLIENT_CONNECT,
+                stream_context_create($context),
+            );
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($socket === false) {
+            $reason = trim($errstr) !== '' ? $errstr : trim((string) $warning);
+            $this->stat('TLS/TCP', $remote . ': ' . ($reason !== '' ? $reason : 'не удалось'), false);
+
+            foreach (HttpClient::troubleshooting($reason) as $hint) {
+                $this->line('       - ' . $hint);
+            }
+
+            return false;
+        }
+
+        fclose($socket);
+        $this->stat('TLS/TCP', $remote . ' доступен', true);
+
+        return true;
+    }
+
+    private function smokeRequest(): GenerationRequest
+    {
+        return new GenerationRequest(
+            name: 'smoke',
+            fqName: 'Delegirium\\Doctor\\smoke',
+            signature: 'function smoke(): int',
+            returnType: 'int',
+            doc: "/** @pure Возвращает число 42. */",
+            className: null,
+            namespace: 'Delegirium\\Doctor',
+            pure: true,
+        );
+    }
+
+    private function stat(string $label, string $value, bool $ok): void
+    {
+        $this->line(sprintf('  [%s] %-18s %s', $ok ? 'ok' : '!!', $label, $value));
     }
 
     /**
@@ -195,6 +399,7 @@ final class Cli
         $this->row('reverse("Delegirium")', $text->invoke('Delegirium\\Examples\\Text\\reverse', ['Delegirium']));
         $this->row('reverse("привет")', $text->invoke('Delegirium\\Examples\\Text\\reverse', ['привет']));
         $this->row('slugify("Hello, Delegirium!")', $text->invoke('Delegirium\\Examples\\Text\\slugify', ['Hello, Delegirium!']));
+        $this->row('add_emoji("привет, мир")', $text->invoke('Delegirium\\Examples\\Text\\add_emoji_after_every_word', ['привет, мир']));
 
         $this->line('');
         $this->summary($math, 0.0);
@@ -239,6 +444,7 @@ Delegirium — PHP, в котором тело функции генерируе
   delegirium compile <file.dlr> [--out=build/x.php] [--json] [--regen] [--dry]
   delegirium check   <file.dlr>
   delegirium env       показать .env-файлы и переменные
+  delegirium doctor    диагностика сети/ключа (--live — реальный запрос к модели)
   delegirium demo
   delegirium cache:clear
 
@@ -260,6 +466,10 @@ Delegirium — PHP, в котором тело функции генерируе
   DELEGIRIUM_MODEL              имя модели
   DELEGIRIUM_API_URL            OpenAI-совместимый endpoint
   DELEGIRIUM_ENV_FILE           явный путь к .env
+  DELEGIRIUM_HTTP              auto | curl | stream (транспорт)
+  DELEGIRIUM_PROXY             host:port (иначе HTTPS_PROXY/HTTP_PROXY)
+  DELEGIRIUM_CAFILE            путь к PEM-бандлу CA
+  DELEGIRIUM_INSECURE          1 — отключить проверку TLS (только диагностика)
 
 .env:
   Переменные можно не экспортировать вручную — положите их в .env в корне
@@ -333,7 +543,8 @@ TXT);
 
     private function line(string $text): void
     {
-        fwrite($this->stdout, $text . PHP_EOL);
+        // `| head` закрывает pipe — не сыпем Notice'ами в таком случае.
+        @fwrite($this->stdout, $text . PHP_EOL);
     }
 
     private static function maskValue(string $key, string $value): string
@@ -351,7 +562,7 @@ TXT);
 
     private function fail(string $message): int
     {
-        fwrite(STDERR, 'delegirium: ' . $message . PHP_EOL);
+        @fwrite(STDERR, 'delegirium: ' . $message . PHP_EOL);
 
         return 1;
     }

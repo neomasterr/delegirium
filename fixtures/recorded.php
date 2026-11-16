@@ -1,17 +1,16 @@
 <?php
 
-// Записанные ответы модели. Оффлайн-сборка читает их вместо сети.
-// Файл перезаписывается командой: delegirium compile <file> --record
+// Автоматически записанные ответы модели. Не редактируйте вручную.
 
-return [
+return array (
+  'Delegirium\\Examples\\Math::add' => 'return $x + $y;',
+  'Delegirium\\Examples\\Math::divide' => 'if ($b === 0.0) {
+    throw new \\DivisionByZeroError(\'Cannot divide by zero\');
+}
 
-    'Delegirium\\Examples\\Math::add' => <<<'PHP'
-return $x + $y;
-PHP,
-
-    'Delegirium\\Examples\\Math::fib' => <<<'PHP'
-if ($n < 0) {
-    throw new \InvalidArgumentException('$n must be non-negative, got ' . $n);
+return $a / $b;',
+  'Delegirium\\Examples\\Math::fib' => 'if ($n < 0) {
+    throw new \\InvalidArgumentException(\'$n must be non-negative, got \' . $n);
 }
 
 if ($n < 2) {
@@ -27,47 +26,77 @@ for ($i = 2; $i <= $n; $i++) {
     $current = $next;
 }
 
-return $current;
-PHP,
-
-    'Delegirium\\Examples\\Math::divide' => <<<'PHP'
-if ($b === 0.0) {
-    throw new \DivisionByZeroError('Cannot divide by zero');
+return $current;',
+  'Delegirium\\Examples\\Text\\add_emoji_after_every_word' => 'if ($s === \'\') {
+    return \'\';
 }
 
-return $a / $b;
-PHP,
+$result = preg_replace(\'/[\\p{L}\\p{N}\\p{M}_]+/u\', \'$0😀\', $s);
 
-    'Delegirium\\Examples\\Text\\reverse' => <<<'PHP'
-if ($s === '') {
-    return '';
+return $result ?? $s;',
+  'Delegirium\\Examples\\Text\\reverse' => 'if ($s === \'\') {
+    return \'\';
 }
 
-$characters = preg_split('//u', $s, -1, PREG_SPLIT_NO_EMPTY);
+$chars = preg_split(\'//u\', $s, -1, PREG_SPLIT_NO_EMPTY);
 
-if ($characters === false) {
+if ($chars === false) {
     return strrev($s);
 }
 
-return implode('', array_reverse($characters));
-PHP,
-
-    'Delegirium\\Examples\\Text\\slugify' => <<<'PHP'
-$slug = preg_replace('/[^a-z0-9]+/', '-', strtolower(trim($s)));
-
-return trim($slug ?? '', '-');
-PHP,
-
-    'Delegirium\\Examples\\Text\\wordCount' => <<<'PHP'
-$trimmed = trim($s);
-
-if ($trimmed === '') {
-    return 0;
+return implode(\'\', array_reverse($chars));',
+  'Delegirium\\Examples\\Text\\rhytm' => '$words = preg_split(\'/[^\\p{L}\\p{N}]+/u\', mb_strtolower($s, \'UTF-8\'), -1, PREG_SPLIT_NO_EMPTY);
+if ($words === false) {
+    $words = [];
 }
 
-$words = preg_split('/\s+/u', $trimmed, -1, PREG_SPLIT_NO_EMPTY);
+$count = 0;
+$n = count($words);
 
-return $words === false ? 0 : count($words);
-PHP,
+for ($i = 0; $i < $n - 1; $i++) {
+    $a = $words[$i];
+    if (mb_strlen($a, \'UTF-8\') < 2) {
+        continue;
+    }
+    $endingA = mb_substr($a, -2, null, \'UTF-8\');
 
-];
+    for ($j = $i + 1; $j < $n; $j++) {
+        $b = $words[$j];
+        if (mb_strlen($b, \'UTF-8\') < 2) {
+            continue;
+        }
+        if (mb_substr($b, -2, null, \'UTF-8\') === $endingA) {
+            $count++;
+        }
+    }
+}
+
+return $count;',
+  'Delegirium\\Examples\\Text\\squanch' => '$parts = preg_split(\'/(\\s+)/u\', $s, -1, PREG_SPLIT_DELIM_CAPTURE);
+if ($parts === false) {
+    return $s;
+}
+
+$result = \'\';
+foreach ($parts as $index => $part) {
+    if ($index % 2 === 1 || $part === \'\') {
+        $result .= $part;
+        continue;
+    }
+
+    $chars = preg_split(\'//u\', $part, -1, PREG_SPLIT_NO_EMPTY);
+    if ($chars === false) {
+        $result .= $part;
+        continue;
+    }
+
+    $result .= implode(\'\', array_reverse($chars));
+}
+
+return $result;',
+  'Delegirium\\Examples\\Text\\wordCount' => '$count = preg_match_all(\'/[\\p{L}\\p{N}]+/u\', $s, $matches);
+if ($count === false) {
+    $count = preg_match_all(\'/[A-Za-z0-9]+/\', $s, $matches);
+}
+return (int) $count;',
+);

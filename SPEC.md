@@ -85,6 +85,13 @@ public function add($x, $y): int
 источников истины нет. Контракт не должен быть двусмысленным: если модель может
 истолковать поведение двумя способами, это дефект контракта, а не модели.
 
+Типы из сигнатуры — жёсткое ограничение, докблок — уточнение поведения. При
+конфликте выполняется тип: если объявлено `: int`, функция обязана вернуть число,
+даже если докблок описывает строковое преобразование (именно так
+`add_emoji_after_every_word(): int` превращается в подсчёт слов). Держите тип и
+докблок согласованными: компилятор предупреждает о расхождении `@return` с
+объявленным типом.
+
 ### 3.2. Отпечаток и кеш
 
 ```
@@ -166,6 +173,20 @@ key = SHA-256(protocol, provider, model, fqName, signature, returnType, doc, pur
 
 `.env` не коммитится (см. `.gitignore`), в репозитории лежит шаблон `.env.example`.
 
+### 3.8. Транспорт и сеть
+
+HTTP-слой (`src/Http`) отправляет запросы через curl, если расширение доступно,
+иначе — через потоки PHP. Выбор: `DELEGIRIUM_HTTP=auto` (по умолчанию), `curl`,
+`stream`. Поддерживаются `DELEGIRIUM_PROXY` (иначе `HTTPS_PROXY`/`HTTP_PROXY`),
+`DELEGIRIUM_CAFILE` и `DELEGIRIUM_INSECURE=1` (только для диагностики). Если
+`DELEGIRIUM_CAFILE` не задан, бандл ищется в `openssl.cafile`/`curl.cainfo` и по
+типичным путям (`<php>/extras/ssl/cacert.pem`, системные CA).
+
+При сбое в исключение попадает дословная причина от транспорта (а не «не удалось»)
+плюс подсказки `HttpClient::troubleshooting()`. `delegirium doctor` проверяет
+среду, транспорт, DNS и TLS-рукопожатие; `delegirium doctor --live` дополнительно
+делает реальный запрос к модели и проверяет ключ/модель.
+
 ## 4. Диагностика
 
 | Симптом | Причина | Что делать |
@@ -174,6 +195,9 @@ key = SHA-256(protocol, provider, model, fqName, signature, returnType, doc, pur
 | `openai`/`openrouter`, HTTP 401/404 | неверный ключ, модель или URL | проверить `DELEGIRIUM_*_KEY`, `DELEGIRIUM_*_MODEL`, `DELEGIRIUM_*_URL` |
 | `openai`/`openrouter`, запрос не удался | нет сети, DNS или TLS | проверить прокси/файрвол и схему URL |
 | переменная «не задана», хотя есть в `.env` | файл не там, или значение перекрыто shell | `delegirium env`; `DELEGIRIUM_ENV_FILE=/path/.env` |
+| `certificate verify failed` | нет CA-бандла или старый TLS | `DELEGIRIUM_CAFILE=.../cacert.pem` или `DELEGIRIUM_HTTP=curl`; `delegirium doctor` |
+| `getaddrinfo ... failed` | DNS/VPN/прокси | `delegirium doctor`; `DELEGIRIUM_PROXY=host:port` |
+| `allow_url_fopen` выключен | запрет URL-обёрток в php.ini | `DELEGIRIUM_HTTP=curl` |
 | `тело пустое` / `нет return` | модель вернула не то | `--regen`; уточнить докблок |
 | `сгенерированный код не компилируется` | модель выдала мусор | `--regen`, сменить модель, сузить контракт |
 | `запрещённый вызов exec()` | модель решила «помочь» | исправить промпт/контракт, не отключать валидатор |

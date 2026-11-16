@@ -15,7 +15,10 @@ use Delegirium\Delegirium;
 use Delegirium\DelegiriumError;
 use Delegirium\DotEnv;
 use Delegirium\GenerationRequest;
+use Delegirium\Http\HttpClient;
+use Delegirium\Http\HttpResponse;
 use Delegirium\Parser;
+use Delegirium\Provider\ChatCompletionsProvider;
 use Delegirium\Provider\OpenAiProvider;
 use Delegirium\Provider\OpenRouterProvider;
 use Delegirium\Provider\ProviderInterface;
@@ -589,6 +592,136 @@ test('.env: провайдер видит значения из файла', fun
     } finally {
         restoreEnv($env);
     }
+});
+
+// --- HTTP-транспорт --------------------------------------------------------
+
+test('HttpResponse: ok() только для 2xx без ошибки', function (): void {
+    check((new HttpResponse(200, 'x'))->ok(), '200 должен быть ok');
+    check(!(new HttpResponse(500, 'x'))->ok(), '500 не ok');
+    check(!(new HttpResponse(0, '', 'boom'))->ok(), 'ошибка не ok');
+    check(!(new HttpResponse(200, 'x'))->failed(), 'нет ошибки транспорта');
+    check((new HttpResponse(0, '', 'boom'))->failed(), 'failed() должен быть true');
+});
+
+test('HttpClient: транспорт выбирается из env', function (): void {
+    $env = saveEnv(['DELEGIRIUM_HTTP']);
+
+    try {
+        putenv('DELEGIRIUM_HTTP=stream');
+        same('stream', HttpClient::fromEnv()->transportName());
+
+        putenv('DELEGIRIUM_HTTP=curl');
+        same('curl', HttpClient::fromEnv()->transportName());
+
+        putenv('DELEGIRIUM_HTTP=auto');
+        same(
+            function_exists('curl_init') ? 'curl' : 'stream',
+            HttpClient::fromEnv()->transportName(),
+            'auto должен выбирать curl, когда он есть',
+        );
+    } finally {
+        restoreEnv($env);
+    }
+});
+
+test('HttpClient: прокси и insecure из env', function (): void {
+    $env = saveEnv(['DELEGIRIUM_PROXY', 'DELEGIRIUM_INSECURE', 'DELEGIRIUM_CAFILE']);
+
+    try {
+        putenv('DELEGIRIUM_PROXY=127.0.0.1:8080');
+        putenv('DELEGIRIUM_INSECURE=1');
+        putenv('DELEGIRIUM_CAFILE=/tmp/ca.pem');
+
+        $client = HttpClient::fromEnv();
+        same('127.0.0.1:8080', $client->proxy());
+        same(true, $client->insecure());
+        same('/tmp/ca.pem', $client->caFile());
+    } finally {
+        restoreEnv($env);
+    }
+});
+
+test('HttpClient: подсказки к ошибкам транспорта', function (): void {
+    check(
+        count(HttpClient::troubleshooting('SSL operation failed: certificate verify failed')) >= 2,
+        'ожидались подсказки про TLS',
+    );
+
+    $dns = HttpClient::troubleshooting('php_network_getaddresses: getaddrinfo failed');
+    check(
+        in_array(true, array_map(static fn (string $h): bool => str_contains($h, 'DNS'), $dns), true),
+        'ожидалась подсказка про DNS',
+    );
+
+    same([], HttpClient::troubleshooting(''));
+});
+
+test('HttpClient: сбой соединения возвращается как ошибка', function (): void {
+    $client = new HttpClient(transport: 'stream');
+    $response = $client->post('http://127.0.0.1:1/', ['Content-Type: application/json'], '{}', 2);
+
+    check($response->failed(), 'должна быть ошибка транспорта');
+    check(trim((string) $response->error) !== '', 'текст ошибки обязан быть непустым');
+    same('stream', $response->transport);
+});
+
+test('DELEGIRIUM_RECORD=1 включает запись в fixtures', function (): void {
+    $env = saveEnv(['DELEGIRIUM_PROVIDER', 'DELEGIRIUM_API_KEY', 'DELEGIRIUM_RECORD']);
+
+    putenv('DELEGIRIUM_PROVIDER=openai');
+    putenv('DELEGIRIUM_API_KEY=test-key');
+    putenv('DELEGIRIUM_RECORD=1');
+
+    try {
+        $provider = Delegirium::provider([]);
+        $recordFile = (new ReflectionProperty(ChatCompletionsProvider::class, 'recordFile'))->getValue($provider);
+
+        same(Delegirium::fixturesFile(), $recordFile);
+    } finally {
+        restoreEnv($env);
+    }
+});
+
+test('HttpClient: CA-бандл подхватывается автоматически, если найден', function (): void {
+    $env = saveEnv(['DELEGIRIUM_CAFILE']);
+    putenv('DELEGIRIUM_CAFILE');
+
+    try {
+        $caFile = HttpClient::fromEnv()->caFile();
+        check($caFile === null || is_file($caFile), 'caFile должен быть существующим файлом или null');
+    } finally {
+        restoreEnv($env);
+    }
+});
+
+test('компилятор предупреждает о расхождении @return и объявленного типа', function (): void {
+    $source = "<?php\nnamespace Tests\\Contract;\n\n/**\n * @return string\n * @pure\n */\nfunction broken(string \$s): int ai;\n";
+    $unit = (new Compiler(new FakeProvider(['Tests\\Contract\\broken' => 'return 42;'])))->compile($source);
+
+    same(1, count($unit->warnings()));
+    check(str_contains($unit->warnings()[0], '@return string'), 'нет типа из докблока');
+    check(str_contains($unit->warnings()[0], 'int'), 'нет объявленного типа');
+});
+
+test('согласованный @return не даёт предупреждений', function (): void {
+    $source = "<?php\nnamespace Tests\\ContractOk;\n\n/**\n * @return int\n * @pure\n */\nfunction ok(int \$n): int ai;\n";
+    $unit = (new Compiler(new FakeProvider(['Tests\\ContractOk\\ok' => 'return $n;'])))->compile($source);
+
+    same([], $unit->warnings());
+});
+
+test('add_emoji_after_every_word из fixtures вставляет эмодзи', function (): void {
+    $unit = Delegirium::compileFile(dirname(__DIR__) . '/examples/text.dlr', [
+        'provider' => new RecordedProvider(null, Delegirium::fixturesFile()),
+        'cache' => false,
+    ]);
+
+    $call = static fn (string $input): mixed => $unit->invoke('Delegirium\\Examples\\Text\\add_emoji_after_every_word', [$input]);
+
+    same('привет😀, мир😀', $call('привет, мир'));
+    same('hello😀 world😀', $call('hello world'));
+    same('', $call(''));
 });
 
 // --- Итог -----------------------------------------------------------------

@@ -31,7 +31,7 @@ final class GenerationRequest
     public function fingerprint(string $providerName, string $model): string
     {
         // Версия протокола промпта: правка текста промпта инвалидирует кеш.
-        $protocol = 'delegirium-prompt/1';
+        $protocol = 'delegirium-prompt/2';
 
         return hash('sha256', implode("\0", [
             $protocol,
@@ -76,7 +76,11 @@ final class GenerationRequest
             '- The code must be valid PHP 8.1+ and will run in the namespace ' . ($this->namespace !== '' ? $this->namespace : '(global)') . '.',
             '- Never call exec, shell_exec, system, passthru, proc_open, popen, eval,',
             '  or include/require. Never read or write the filesystem or the network.',
-            '- Respect the declared parameter and return types exactly.',
+            '- Respect the declared parameter and return types exactly: they are binding.',
+            '- If the docblock\'s intent conflicts with a declared type, satisfy the type.',
+            '  E.g. a `: int` signature means you must return a number, even when the',
+            '  docblock describes a string transformation — return a number computed',
+            '  from that transformation instead of ignoring the declared type.',
             '- Honour the documented edge cases; throw the documented exception types',
             '  with a clear message.',
             $purity,

@@ -50,6 +50,8 @@ final class Compiler
             $request = $decl->request();
             $key = $request->fingerprint($this->provider->name(), $this->provider->model());
 
+            $warnings = [...$warnings, ...self::contractWarnings($decl)];
+
             $body = null;
             $cached = false;
 
@@ -191,6 +193,58 @@ final class Compiler
         }
 
         return $depth === 0;
+    }
+
+    /**
+     * Дешёвая проверка контракта: `@return` в докблоке не должен противоречить
+     * объявленному типу. При конфликте генератор верит типу, поэтому расхождение
+     * почти всегда означает ошибку в объявлении (например, копипасту из соседней
+     * функции с тем же телом, но другим результатом).
+     *
+     * @return list<string>
+     */
+    private static function contractWarnings(FunctionDecl $decl): array
+    {
+        $declared = self::normalizeType($decl->returnType);
+
+        if ($declared === '') {
+            return [];
+        }
+
+        if (preg_match('/@return\s+([^\s*]+)/', $decl->doc, $match) !== 1) {
+            return [];
+        }
+
+        $raw = $match[1];
+        $documented = self::normalizeType($raw);
+
+        if ($documented === '' || $documented === $declared) {
+            return [];
+        }
+
+        // Сложные формы (array<int, Foo>, A|B, ?A) построчно сравнивать бессмысленно.
+        if (str_contains($raw, '<') || str_contains($raw, '|') || str_contains($raw, '&') || str_contains($raw, '?')) {
+            return [];
+        }
+
+        return [sprintf(
+            '%s: @return %s в докблоке не совпадает с объявленным типом : %s — генератор опирается на тип.',
+            $decl->fqName(),
+            $documented,
+            $declared,
+        )];
+    }
+
+    private static function normalizeType(string $type): string
+    {
+        $type = strtolower(ltrim(trim($type), '\\'));
+
+        return match ($type) {
+            'integer' => 'int',
+            'boolean' => 'bool',
+            'double', 'real' => 'float',
+            default => $type,
+        };
     }
 
     /**

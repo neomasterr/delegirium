@@ -40,6 +40,9 @@ printf("  reverse('Delegirium')          = %s\n", $text->invoke('Delegirium\\Exa
 printf("  reverse('привет')            = %s\n", $text->invoke('Delegirium\\Examples\\Text\\reverse', ['привет']));
 printf("  slugify('Hello, Delegirium!')  = %s\n", $text->invoke('Delegirium\\Examples\\Text\\slugify', ['Hello, Delegirium!']));
 printf("  wordCount('a b  c')          = %d\n", $text->invoke('Delegirium\\Examples\\Text\\wordCount', ['a b  c']));
+printf("  add_emoji('otorvi mne nogi obivan kenobi')          = %s\n", $text->invoke('Delegirium\\Examples\\Text\\add_emoji_after_every_word', ['otorvi mne nogi obivan kenobi']));
+printf("  squanch('otorvi mne nogi obivan kenobi')          = %s\n", $text->invoke('Delegirium\\Examples\\Text\\squanch', ['otorvi mne nogi obivan kenobi']));
+
 
 echo "\n--- сгенерированный PHP для math.dlr ---\n\n";
 echo $math->php();

@@ -6,6 +6,7 @@ namespace Delegirium\Provider;
 
 use Delegirium\DelegiriumError;
 use Delegirium\GenerationRequest;
+use Delegirium\Http\HttpClient;
 
 /**
  * Общая реализация провайдера поверх OpenAI-совместимого
@@ -14,7 +15,9 @@ use Delegirium\GenerationRequest;
  * Наследники задают только имя провайдера, endpoint и дополнительные заголовки
  * (например, OpenRouter требует HTTP-Referer/X-Title для атрибуции).
  *
- * Запросы идут через потоки PHP: curl не нужен.
+ * Сеть — через HttpClient: curl или потоки, с прокси и CA-файлом из окружения.
+ * При сбое в сообщение попадает дословная причина от транспорта, а не общая
+ * фраза «запрос не удался».
  */
 abstract class ChatCompletionsProvider implements ProviderInterface
 {
@@ -30,6 +33,7 @@ abstract class ChatCompletionsProvider implements ProviderInterface
         protected readonly float $temperature = 0.0,
         protected readonly int $timeout = 60,
         protected readonly array $extraHeaders = [],
+        private readonly ?HttpClient $http = null,
     ) {
         if ($apiKey === '') {
             throw new DelegiriumError(sprintf('%s: пустой API-ключ.', $providerName));
@@ -51,6 +55,11 @@ abstract class ChatCompletionsProvider implements ProviderInterface
         return $this->endpoint;
     }
 
+    public function transport(): string
+    {
+        return ($this->http ?? HttpClient::fromEnv())->transportName();
+    }
+
     public function generate(GenerationRequest $request): string
     {
         $payload = [
@@ -62,16 +71,34 @@ abstract class ChatCompletionsProvider implements ProviderInterface
             ],
         ];
 
-        [$status, $raw, $responseHeaders] = $this->send($payload);
-        /** @var array<string, mixed> $data */
-        $data = json_decode($raw, true) ?? [];
+        $http = $this->http ?? HttpClient::fromEnv();
+        $response = $http->post(
+            $this->endpoint,
+            $this->headers(),
+            json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            $this->timeout,
+        );
 
-        if ($status >= 400 || isset($data['error'])) {
+        if ($response->failed()) {
+            throw new DelegiriumError(sprintf(
+                '%s: запрос к %s не удался (%s): %s%s',
+                $this->providerName,
+                $this->endpoint,
+                $response->transport !== '' ? $response->transport : $http->transportName(),
+                $response->error,
+                self::hints((string) $response->error),
+            ));
+        }
+
+        /** @var array<string, mixed> $data */
+        $data = json_decode($response->body, true) ?? [];
+
+        if ($response->status >= 400 || isset($data['error'])) {
             throw new DelegiriumError(sprintf(
                 '%s: HTTP %d%s',
                 $this->providerName,
-                $status,
-                self::errorDetail($data, $raw),
+                $response->status,
+                self::errorDetail($data, $response->body),
             ));
         }
 
@@ -79,7 +106,7 @@ abstract class ChatCompletionsProvider implements ProviderInterface
             throw new DelegiriumError(sprintf(
                 '%s: некорректный ответ сервера (не JSON): %s',
                 $this->providerName,
-                self::snippet($raw),
+                self::snippet($response->body),
             ));
         }
 
@@ -122,38 +149,6 @@ abstract class ChatCompletionsProvider implements ProviderInterface
     }
 
     /**
-     * @param array<string, mixed> $payload
-     * @return array{0: int, 1: string, 2: list<string>}
-     */
-    private function send(array $payload): array
-    {
-        $context = stream_context_create([
-            'http' => [
-                'method' => 'POST',
-                'header' => implode("\r\n", $this->headers()),
-                'content' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
-                'timeout' => $this->timeout,
-                'ignore_errors' => true,
-            ],
-        ]);
-
-        $raw = @file_get_contents($this->endpoint, false, $context);
-
-        if ($raw === false) {
-            throw new DelegiriumError(sprintf(
-                '%s: запрос к %s не удался (сеть, DNS или TLS).',
-                $this->providerName,
-                $this->endpoint,
-            ));
-        }
-
-        /** @var list<string> $responseHeaders */
-        $responseHeaders = $http_response_header ?? [];
-
-        return [self::status($responseHeaders), $raw, $responseHeaders];
-    }
-
-    /**
      * @return list<string>
      */
     private function headers(): array
@@ -166,20 +161,16 @@ abstract class ChatCompletionsProvider implements ProviderInterface
         ];
     }
 
-    /**
-     * @param list<string> $responseHeaders
-     */
-    private static function status(array $responseHeaders): int
+    private static function hints(string $error): string
     {
-        if ($responseHeaders === []) {
-            return 0;
+        $hints = HttpClient::troubleshooting($error);
+
+        if ($hints === []) {
+            return "\nПодробная диагностика: php bin/delegirium doctor --live";
         }
 
-        if (preg_match('~^HTTP/\S+\s+(\d{3})~', $responseHeaders[0], $matches) === 1) {
-            return (int) $matches[1];
-        }
-
-        return 0;
+        return "\nПодсказки:\n- " . implode("\n- ", $hints)
+            . "\nПодробная диагностика: php bin/delegirium doctor --live";
     }
 
     /**

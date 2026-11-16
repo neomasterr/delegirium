@@ -163,7 +163,18 @@ final class Delegirium
 
         $openAiKey = (string) (getenv('DELEGIRIUM_API_KEY') ?: '');
         $openRouterKey = (string) (getenv('DELEGIRIUM_OPENROUTER_KEY') ?: '');
-        $recordFile = $options['record_file'] ?? (getenv('DELEGIRIUM_RECORD') ?: null);
+        $recordFile = $options['record_file'] ?? null;
+
+        if ($recordFile === null) {
+            $recordEnv = getenv('DELEGIRIUM_RECORD');
+
+            if (is_string($recordEnv) && trim($recordEnv) !== '') {
+                // DELEGIRIUM_RECORD=1 — включаем запись в стандартный fixtures.
+                $recordFile = in_array(strtolower(trim($recordEnv)), ['1', 'true', 'yes', 'on'], true)
+                    ? self::fixturesFile()
+                    : trim($recordEnv);
+            }
+        }
 
         if ($preferred === 'recorded') {
             return new RecordedProvider(fixtureFile: self::fixturesFile());

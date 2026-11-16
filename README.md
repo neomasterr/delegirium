@@ -91,6 +91,40 @@ php bin/delegirium compile examples/math.dlr --regen
 при наличии `DELEGIRIUM_OPENROUTER_KEY` и отсутствии `DELEGIRIUM_API_KEY`.
 Необязательный `DELEGIRIUM_OPENROUTER_REFERER` уходит в заголовок `HTTP-Referer`.
 
+### Если провайдер не отвечает
+
+Компилятор больше не прячет причину: в ошибке будет дословный текст транспорта
+и подсказки. Полная диагностика:
+
+```bash
+php bin/delegirium doctor          # среда, транспорт, DNS, TLS
+php bin/delegirium doctor --live   # плюс реальный запрос к модели
+```
+
+Частые причины на Windows и серверах:
+
+| Что в ошибке | Что сделать |
+|---|---|
+| `certificate verify failed`, `SSL operation failed` | указать `DELEGIRIUM_CAFILE` (например, `C:\php\extras\ssl\cacert.pem`) или перейти на curl; бандл ищется автоматически в `php.ini` и рядом с PHP |
+| `allow_url_fopen ...` / потоки выключены | `DELEGIRIUM_HTTP=curl` |
+| `getaddrinfo ... failed` | проверить DNS/VPN или задать `DELEGIRIUM_PROXY=host:port` |
+| `Connection refused`, `timed out` | фаервол/прокси, `DELEGIRIUM_PROXY` |
+
+`DELEGIRIUM_HTTP=auto` (по умолчанию) берёт curl, если расширение установлено,
+иначе потоки. `DELEGIRIUM_INSECURE=1` отключает проверку TLS — только для
+локальной диагностики, не для постоянной работы.
+
+### Тело не соответствует замыслу
+
+Сначала проверьте контракт: **типы жёстче докблока**. Если объявлено `: int`,
+модель обязана вернуть число — «добавить эмодзи» превратится в подсчёт слов.
+Поправьте тип (`: string`), уточните докблок (какой эмодзи, что с пунктуацией)
+и перегенерируйте с `--regen`.
+
+`php bin/delegirium check <file.dlr>` печатает предупреждения, если `@return` в
+докблоке расходится с объявленным типом — самая частая причина «функция делает
+не то».
+
 ## Пример
 
 `examples/math.dlr`:
@@ -129,6 +163,7 @@ echo $calculator->add(2, 3); // 5
 | `src/Compiler.php` | генерирует тела, кеширует, вставляет, линтует файл целиком |
 | `src/Validator.php` | проверяет тело до исполнения, формулирует обратную связь |
 | `src/DotEnv.php` | загрузка `.env` без зависимостей (shell важнее файла) |
+| `src/Http/*` | HTTP-транспорт: curl/stream, прокси, CA, реальный текст ошибки |
 | `src/Provider/*` | `openai` и `openrouter` (живая модель), `recorded` (оффлайн-сборка) |
 | `src/Cache.php` | кеш тел по отпечатку промпта |
 | `src/CompiledUnit.php` | сохранение, загрузка и вызов скомпилированного кода |

@@ -25,8 +25,19 @@ function slugify(string $s): string ai;
 function wordCount(string $s): int ai;
 
 /**
+ * Добавляет эмодзи 😀 после каждого слова, сохраняя разделители:
+ * пробелы, переводы строк и знаки препинания остаются на своих местах.
+ *
+ * Пример: "привет, мир" -> "привет😀, мир😀"
+ *
+ * @return string
+ * @pure
+ */
+function add_emoji_after_every_word(string $s): string ai;
+
+/**
  * Сквончит слова в строке.
  *
  * @pure
  */
-function squanch(string $s): int ai;
+function squanch(string $s): string ai;
