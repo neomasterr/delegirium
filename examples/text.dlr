@@ -1,0 +1,32 @@
+<?php
+
+namespace Delegirium\Examples\Text;
+
+/**
+ * Переворачивает строку посимвольно, корректно для UTF-8.
+ *
+ * @pure
+ */
+function reverse(string $s): string ai;
+
+/**
+ * Приводит строку к slug: нижний регистр, всё, кроме латиницы и цифр,
+ * схлопывается в дефис, краевые дефисы обрезаются.
+ *
+ * @pure
+ */
+function slugify(string $s): string ai;
+
+/**
+ * Считает количество слов в строке.
+ *
+ * @pure
+ */
+function wordCount(string $s): int ai;
+
+/**
+ * Сквончит слова в строке.
+ *
+ * @pure
+ */
+function squanch(string $s): int ai;

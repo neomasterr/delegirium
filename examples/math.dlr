@@ -1,0 +1,43 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Delegirium\Examples;
+
+/**
+ * Арифметика, у методов которой нет тел: их пишет модель.
+ *
+ * Класс остаётся обычным PHP-классом — единственное отличие в том, что вместо
+ * `{ ... }` у метода стоит маркер `ai;`.
+ */
+final class Math
+{
+    /**
+     * Складывает два целых числа.
+     *
+     * @param int $x
+     * @param int $y
+     * @return int
+     * @pure
+     */
+    public function add($x, $y): int ai;
+
+    /**
+     * Возвращает n-е число Фибоначчи, где fib(0) = 0, fib(1) = 1.
+     *
+     * @param int $n
+     * @return int
+     * @throws \InvalidArgumentException если $n отрицательный
+     * @pure
+     */
+    public function fib(int $n): int ai;
+
+    /**
+     * Делит $a на $b.
+     *
+     * @return float
+     * @throws \DivisionByZeroError если $b равен нулю
+     * @pure
+     */
+    public function divide(float $a, float $b): float ai;
+}

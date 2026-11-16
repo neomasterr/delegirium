@@ -1,0 +1,11 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/src/autoload.php';
+
+// Подхватываем .env до разбора аргументов: DELEGIRIUM_* можно не экспортировать.
+Delegirium\Delegirium::boot();
+
+exit((new Delegirium\Cli())->run($argv));

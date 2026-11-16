@@ -1,0 +1,7 @@
+/build/
+/.delegirium-cache/
+/.env
+/.env.*
+!/.env.example
+*.log
+.DS_Store
